@@ -2,7 +2,7 @@
 This repository contains R code to implement the methodology described in the paper:
 
 **Li, X., Cook, R. J., & Diao, L. (2026+).**  
-[Variable Selection for Illness-death Processes under Dual Observation Schemes]
+Variable Selection for Illness-death Processes under Dual Observation Schemes,
 **Statistics in Medicine**
 
 ## helper_functions
