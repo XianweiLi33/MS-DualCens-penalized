@@ -1,0 +1,177 @@
+em.pen2 <- function(theta.start, datac, lambda){
+  cur.theta <- theta.start
+  iter = 0
+  tol = 9999
+  while(tol > 10e-6){
+    cat(" iter", iter)
+    iter <- iter + 1
+    pre.theta <- cur.theta
+    df.new <- estep(datac = datac, theta = pre.theta)
+    cur.theta <- mstep.pen(datac = datac, df.new, theta = pre.theta, lambda = lambda)
+    print(cur.theta)
+    
+    cur.theta2 <- as.numeric(c(log(cur.theta$par01[1:npiece1]), log(cur.theta$par02[1:npiece2]), log(cur.theta$par12[1:npiece2]),
+                               cur.theta$par01[-c(1:npiece1)], cur.theta$par02[-c(1:npiece2)], cur.theta$par12[-c(1:npiece2)]
+                              ))
+    # pre.theta: 
+    pre.theta2 <- as.numeric(c(log(pre.theta$par01[1:npiece1]), log(pre.theta$par02[1:npiece2]), log(pre.theta$par12[1:npiece2]),
+                               pre.theta$par01[-c(1:npiece1)], pre.theta$par02[-c(1:npiece2)], pre.theta$par12[-c(1:npiece2)]
+    ))
+    dif.theta <- abs((cur.theta2 - pre.theta2)) # absolute difference
+    # dif.theta <- ifelse(pre.theta == 0, abs(cur.theta - pre.theta), dif.theta)
+    tol <- max(dif.theta)
+    cat("tol = ", tol)
+    if ( iter > 100 ) { break }
+  }
+  out <- NULL
+  out$tol  <- tol
+  out$iter <- iter
+  out$theta <- cur.theta
+  print(out)
+  return(out)
+}
+
+# e-step: datac + theta --> conditional expectation 
+estep <- function(datac, theta){
+  pzv <- vapply(1: nrow(datac), pzv_fn_s, theta = theta, FUN.VALUE = numeric(2), datac = datac) #1
+  # EvinB
+  EvinB_h1 <- vapply(1: nrow(datac), EvinB_fn_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac) #2
+  EvinB_h2 <- vapply(1: nrow(datac), EvinB_fn_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac) #2
+  EvinB_h3 <- vapply(1: nrow(datac), EvinB_fn_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac) #2
+  
+  mu_0v_given0_h1 <- vapply(1: nrow(datac), mu_0v_given0_fn_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#3
+  mu_0v_given0_h2 <- vapply(1: nrow(datac), mu_0v_given0_fn_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#3
+  mu_0v_given0_h3 <- vapply(1: nrow(datac), mu_0v_given0_fn_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#3
+  
+  mu_0t_given1_h1 <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#3
+  mu_0t_given1_h2 <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#3
+  mu_0t_given1_h3 <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#3
+  
+  # compare
+  # mu_0t_given1_h1 <- vapply(1: nrow(datac), mu_0t_given1_fn_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3
+  # mu_0t_given1_h1_fast <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3
+  # cbind(mu_0t_given1_h1,mu_0t_given1_h1_fast)
+  # mu_tv_given1_h1 <- vapply(1: nrow(datac), mu_tv_given1_fn_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#7
+  # mu_tv_given1_h1_fast <- vapply(1: nrow(datac), mu_tv_given1_fn_fast_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#7
+  # sum(mu_tv_given1_h1 - mu_tv_given1_h1_fast)
+  
+  mu_tv_given1_h1 <- vapply(1: nrow(datac), mu_tv_given1_fn_fast_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#7
+  mu_tv_given1_h2 <- vapply(1: nrow(datac), mu_tv_given1_fn_fast_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#7
+  mu_tv_given1_h3 <- vapply(1: nrow(datac), mu_tv_given1_fn_fast_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)#7
+  
+  ############### 0-1 process ################################
+  mu_0v_given0_01_h1 <- vapply(1: nrow(datac), mu_0v_given0_fn_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3)#8
+  mu_0v_given0_01_h2 <- vapply(1: nrow(datac), mu_0v_given0_fn_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3)#8
+  mu_0v_given0_01_h3 <- vapply(1: nrow(datac), mu_0v_given0_fn_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3)#8
+  
+  mu_0t_given1_01_h1 <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3)#8
+  mu_0t_given1_01_h2 <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3)#8
+  mu_0t_given1_01_h3 <- vapply(1: nrow(datac), mu_0t_given1_fn_fast_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_01)#3)#8
+  
+  Et01inB_given1_h1 <- vapply(1: nrow(datac), Et01inB_given1_fn_s, theta = theta, h = 1, FUN.VALUE = numeric(1), datac = datac)#8
+  Et01inB_given1_h2 <- vapply(1: nrow(datac), Et01inB_given1_fn_s, theta = theta, h = 2, FUN.VALUE = numeric(1), datac = datac)#8
+  Et01inB_given1_h3 <- vapply(1: nrow(datac), Et01inB_given1_fn_s, theta = theta, h = 3, FUN.VALUE = numeric(1), datac = datac)#8
+  
+  # build the data frame for the failure process
+  df.list <- vector("list", nrow(datac))
+  for(i in 1: nrow(datac)){
+    df.list[[i]] <- data.frame(id = i, pzv = c(rep(pzv[1, i], npiece1), rep(pzv[2, i], npiece1*2)),
+                               h = c(1:npiece1, 1:npiece1, 1:npiece1),
+                               xt = c(rep(0, npiece1), rep(1, npiece1), rep(0, npiece1)),
+                               mu = c(mu_0v_given0_h1[i], mu_0v_given0_h2[i], mu_0v_given0_h3[i],
+                                      mu_tv_given1_h1[i], mu_tv_given1_h2[i], mu_tv_given1_h3[i],
+                                      mu_0t_given1_h1[i], mu_0t_given1_h2[i], mu_0t_given1_h3[i]),
+                               d = c(EvinB_h1[i], EvinB_h2[i], EvinB_h3[i], EvinB_h1[i], EvinB_h2[i], EvinB_h3[i], 0, 0, 0))
+  }
+  df.new.failure <- do.call(rbind, df.list)
+  # data for the 0-1 process
+  df.list <- vector("list", nrow(datac))
+  for(i in 1: nrow(datac)){
+    df.list[[i]] <- data.frame(id = i, pzv = c(rep(pzv[1, i], npiece1), rep(pzv[2, i], npiece1)),
+                               h = c(1:npiece1, 1:npiece1),
+                               mu = c(mu_0v_given0_01_h1[i], mu_0v_given0_01_h2[i], mu_0v_given0_01_h3[i],
+                                      mu_0t_given1_01_h1[i], mu_0t_given1_01_h2[i], mu_0t_given1_01_h3[i]),
+                               d = c(0,0,0, Et01inB_given1_h1[i], Et01inB_given1_h2[i], Et01inB_given1_h3[i]))
+  }
+  df.new.01 <- do.call(rbind, df.list)
+  df.new = list(df.new.failure = df.new.failure, df.new.01 = df.new.01)
+  return(df.new)
+}
+
+mstep.pen <- function(datac, df.new, theta, lambda){
+  theta.new <- NULL
+  # failure process =========================
+  df.new.failure <- df.new$df.new.failure
+  # only keep obs with s>0
+  df.ps <- df.new.failure[df.new.failure$mu > 0 & df.new.failure$pzv > 0, ]
+  # merge with x
+  df.ps <- merge(df.ps, datac[, c("id", paste0("x", 1:p))])
+  # generate indicators by myself
+  pieces <- matrix(0, nrow = nrow(df.ps), ncol = (npiece2 -1))
+  for (k in 2:npiece1) {
+    pieces[,k-1] <- ifelse(df.ps$h == k, 1, 0)
+  }   
+  colnames(pieces) <- c("p2", "p3")
+  df.ps$xt <- as.factor(df.ps$xt)
+  
+  f <- as.formula(d ~ pieces + xt*pieces + xt:(.-id - pzv - h - xt - mu - d) - 1) 
+  glm.x <- model.matrix(f, df.ps)
+  colnames(glm.x)
+  # rearrange the design matrix
+  glm.x <- glm.x[, c("piecesp2", "piecesp3", "xt1", "piecesp2:xt1", "piecesp3:xt1", paste0("xt0:x", 1:p), paste0("xt1:x", 1:p))]
+  colnames(glm.x)
+  
+  penalty.factor <- rep(1, ncol(glm.x))
+  # (force "type" in: including piece)
+  nopenalty.index = 1:(2*npiece2 - 1) # because there are 2 transitions
+  penalty.factor[nopenalty.index] <- 10e-6
+  # if no penalty
+  # colnames(glm.x)
+  # fit <- glm.fit(x = glm.x, y = as.numeric(df.ps$d), weights = df.ps$pzv*rep(nrow(glm.x)/nrow(datac), nrow(glm.x)),
+  #                family = quasipoisson(link = "log"), offset = as.numeric(log(df.ps$mu)))
+  fit <- glmnet(x = glm.x, y = as.numeric(df.ps$d), weights = df.ps$pzv*rep(nrow(glm.x)/nrow(datac), nrow(glm.x)),
+                family = quasipoisson(link = "log"), offset = as.numeric(log(df.ps$mu)), penalty.factor = penalty.factor, alpha = 1, lambda = lambda)
+  (cf <- coef(fit))
+  # transform into theta.new
+  (baseline02 <- exp(cf[1] + c(0, cf[2:npiece2])))
+  (baseline12 <- exp(cf[1] + c(0, cf[2:npiece2]) + cf[1 + npiece2] + c(0, cf[(2 + npiece2):(2*npiece2)])))
+  # theta.new$par2 <- c(baseline, cf[names(cf) %in% paste0("x", 1:p)])
+  theta.new$par02 <- c(baseline02, cf[(2*npiece2 + 1): (2*npiece2 + p)])
+  theta.new$par12 <- c(baseline12, cf[(2*npiece2 + 1 + p): (2*npiece2 + p + p)])
+  
+  theta.new
+  # failure process done
+  # -------------------------------------------------------------------------------------------------------------------------------------------
+  # 0-1 process starts
+  df.new.01 <- df.new$df.new.01
+  # only keep obs with s>0
+  df.ps <- df.new.01[df.new.01$mu > 0 & df.new.01$pzv > 0, ]
+  # merge with x
+  df.ps <- merge(df.ps, datac[, c("id", paste0("x", 1:p))])
+  # generate indicators by myself
+  pieces <- matrix(0, nrow = nrow(df.ps), ncol = (npiece1 -1))
+  for (k in 2:npiece1) {
+    pieces[,k-1] <- ifelse(df.ps$h == k, 1, 0)
+  }   
+  colnames(pieces) <- c("p2", "p3")
+  f <- as.formula(d ~ pieces + (.-id - pzv - h - mu - d) - 1) 
+  glm.x <- model.matrix(f, df.ps)
+  colnames(glm.x)
+  
+  penalty.factor <- rep(1, ncol(glm.x))
+  # (force "type" in: including piece)
+  nopenalty.index = 1:(npiece1 - 1)
+  penalty.factor[nopenalty.index] <- 10e-6
+  # if no penalty
+  # colnames(glm.x)
+  # fit <- glm.fit(x = glm.x, y = as.numeric(df.ps$d), weights = df.ps$pzv*rep(nrow(glm.x)/nrow(datac), nrow(glm.x)), family = quasipoisson(link = "log"), offset= as.numeric(log(df.ps$mu)))
+  fit <- glmnet(x = glm.x, y = as.numeric(df.ps$d), weights = df.ps$pzv*rep(nrow(glm.x)/nrow(datac), nrow(glm.x)), 
+                family = quasipoisson(link = "log"), offset = as.numeric(log(df.ps$mu)), penalty.factor = penalty.factor, alpha = 1, lambda = lambda)  
+  cf <- coef(fit)
+  baseline01 <- exp(cf[1] + c(0, cf[2:npiece1]))
+  theta.new$par01 <- c(baseline01, cf[(npiece1 + 1): (npiece1 + p)])
+  theta.new
+  pieces <- NULL; glm.x <- NULL; fit <- NULL; cf <- NULL
+  # print(theta.new)
+  return(theta.new)
+}
