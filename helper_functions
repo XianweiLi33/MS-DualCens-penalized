@@ -1,0 +1,539 @@
+# matrix exponential: q -> p (within interval)
+p_h <- function(qmat, start, end){
+  if (start  ==  end){
+    p = diag(3)
+  }else if (end == Inf){ # would enter state 2 when t = Inf
+    p = cbind(rep(0, 3), rep(0, 3), rep(1, 3))
+  }else{
+    p = expm(qmat*(end - start))
+  }
+  return(p)
+}
+
+# label each mini interval with (,)
+# define the union of the cut-points
+all_cut_points <- sort(unique(c(cut_points_D, cut_points_01)))
+# mark each interval as (01, failure) 
+a = b = rep(NA, length(all_cut_points) - 1)
+for(i in 1:(length(all_cut_points) - 1)){
+  a[i] = min(which(cut_points_01 >= all_cut_points[i+1])) - 1
+  b[i] = min(which(cut_points_D >= all_cut_points[i+1])) - 1
+}
+# q_{h+1} = q_h for the last interval
+a <- c(a, a[length(a)]) # a is for 0-1
+b <- c(b, b[length(b)]) # b is for death process
+
+# rate matrix
+q_h <- function(h, theta, x){
+  # which set of par
+  par01 = theta$par01
+  par02 = theta$par02
+  par12 = theta$par12
+  # regression coefficients
+  beta01 <- par01[-c(1:npiece1)]
+  beta02 <- par02[-c(1:npiece2)]
+  beta12 <- par12[-c(1:npiece2)]
+  # baseline
+  l01 = par01[1:npiece1]
+  l02 = par02[1:npiece2]
+  l12 = par12[1:npiece2]
+  
+  q <- rbind(c(-l01[a[h]]*as.vector(exp(x%*%beta01))- l02[b[h]]*as.vector(exp(x%*%beta02)), l01[a[h]]*as.vector(exp(x%*%beta01)), l02[b[h]]*as.vector(exp(x%*%beta02))),
+             c(0,-l12[b[h]]*as.vector(exp(x%*%beta12)), l12[b[h]]*as.vector(exp(x%*%beta12))),
+             c(0, 0, 0))
+  return(q)
+}
+# transition probability function
+p_fn <- function(start, end, theta, x) {
+  # if start = end, assign 1 to the transition probability
+  if(start == end){
+    p = diag(3)
+  }else{
+    # general transition probability
+    h.lower = min(which(all_cut_points > start)) - 1
+    h.upper = ifelse(end == Inf, max(which(all_cut_points < end)) - 1, max(which(all_cut_points <= end)) - 1)
+    if(h.lower > h.upper){ # if h.lower > h.upper -> same interval h.lower
+      p = p_h(qmat = q_h(h.lower, theta, x), start = start, end = end)
+    }else if (h.lower == h.upper){# spans 2 intervals
+      p = p_h(qmat = q_h(h.lower, theta, x), start = start, end = all_cut_points[h.lower + 1])%*%
+        p_h(qmat = q_h(h.upper + 1, theta, x), start = all_cut_points[h.upper + 1], end = end)
+    }else{ # spans more intervals
+      p <- p_h(qmat = q_h(h.lower, theta, x), start = start, end = all_cut_points[h.lower + 1])%*%p_h(qmat = q_h(h.upper + 1, theta, x), start = all_cut_points[h.upper + 1], end = end)
+      for(i in 1:(h.upper - h.lower)){
+        p = p%*%p_h(qmat = q_h(h.lower + i, theta, x), start = all_cut_points[h.lower + i], end = all_cut_points[h.lower + i + 1])
+      }
+    }
+  }
+  return(p)
+}
+
+# check
+# p_fn(start = 0, end = 0.4, theta, x)
+# p_h(q_h(1, theta, x), 0, 0.2)%*%p_h(q_h(2, theta, x), 0.2, 0.3)%*%p_h(q_h(3, theta, x), 0.3, 0.4)
+
+# all classes of conditional expectations =======================================================================
+# P(Z(V-) = 0 |D) depends on Z(a_r)
+############################1
+pzv_fn <- function(theta, delta, ar, zar, V, x){
+  # which set of par
+  par01 = theta$par01
+  par02 = theta$par02
+  par12 = theta$par12
+  # baseline
+  l01_base = par01[1:npiece1]
+  l02_base = par02[1:npiece2]
+  l12_base = par12[1:npiece2]
+  # regression coefficients
+  beta01 <- par01[-c(1:npiece1)]
+  beta02 <- par02[-c(1:npiece2)]
+  beta12 <- par12[-c(1:npiece2)]
+  if(zar == 1){
+    pzv1 = 1; pzv0 = 0
+  }else if(zar == 0){
+    if(delta == 1){
+      l02 <- l02_base[max(which(cut_points_D < V))]
+      l12 <- l12_base[max(which(cut_points_D < V))]
+      num0 <- p_fn(ar, V, theta, x)[1,1]*l02*exp(x %*% beta02)
+      num1 <- p_fn(ar, V, theta, x)[1,2]*l12*exp(x %*% beta12)
+      deno <- num0 + num1
+      pzv0 <- num0/deno; pzv1 <- num1/deno
+    }else if(delta == 0){
+      num0 <- p_fn(ar, V, theta, x)[1,1]
+      num1 <- p_fn(ar, V, theta, x)[1,2]
+      deno <- num0 + num1
+      pzv0 <- num0/deno; pzv1 <- num1/deno
+    }
+  }
+  return(c(pzv0, pzv1))
+}
+# pzv_fn(theta, delta, ar, zar, V, x)
+
+
+pzv_fn_s <- function(i, theta, datac){
+  temp <- datac[i, ]
+  val = with(temp, pzv_fn(theta = theta, delta, ar, zar, V, x = as.numeric(temp[c(paste0("x", 1:p))])))
+  return(val)
+}
+
+############################2
+# E(I(V ∈ B2h) | D, Z(V −) = 0) 
+EvinB_fn <- function(theta, delta, V, h){
+  if(delta == 1 & cut_points_D[h] < V & V <= cut_points_D[h+1]){
+    val = 1
+  }else{
+    val = 0
+  }
+  return(val)
+}
+
+EvinB_fn_s <- function(i, h, theta, datac){
+  temp <- datac[i, ]
+  val = with(temp, EvinB_fn(theta, delta, V, h))
+  return(val)
+}
+
+# vapply(1:100, EvinB_fn_s, h = 3, theta = theta, FUN.VALUE = numeric(1), datac = datac)
+############################3
+# mu function (there are 3 types of mu functions)
+mu_0v_given0_fn <- function(zar, V, h, cutpoints){ # path must be 0-2 (because given Z(V-) = 0)
+  if(zar == 1){
+    0
+  }else if (zar == 0){
+    max(min(cutpoints[h+1], V) - max(cutpoints[h], 0), 0)
+  }
+}
+
+mu_0v_given0_fn_s <- function(i, h, theta, datac, cutpoints){
+  temp <- datac[i, ]
+  val = with(temp, mu_0v_given0_fn(zar, V, h, cutpoints))
+  return(val)
+}
+
+# mu_0v_given0_fn_s(1, 1, theta, datac)
+# vapply(1:100, mu_0v_given0_fn_s, h = 3, theta = theta, FUN.VALUE = numeric(1), datac = datac, cutpoints = cutpoints_D)
+
+############################5
+# f001 <- function(c1, c2, theta, x, h){ # h is for the 01 process (1st set of cutpoints)
+#   if (c2 == Inf){
+#     return(0)
+#   }else{
+#     par1 = theta$par1
+#     par2 = theta$par2
+#     gamma = theta$gamma
+#     # baseline
+#     l1_base = par1[1:npiece1]
+#     l2_base = par2[1:npiece2]
+#     # regression coefficients
+#     beta1 <- par1[-c(1:npiece1)]
+#     beta2 <- par2[-c(1:npiece2)]
+#     # baselines * x effects
+#     l1 = l1_base[h]*as.vector(exp(x%*%beta1))
+#     l2 = l2_base[h]*as.vector(exp(x%*%beta2))
+#     if(l1 == l2){
+#       p1 = (c2-(c2+c1)/2)*(c2 - c1)*l1*exp(l1*(c1-c2))
+#       return(p1)
+#     }else{
+#       p1 = l1/(l2-l1)*exp(l1*(c1-c2))*(c2 - c1)
+#       p2 = -l1/(l2-l1)*(exp(l1*(c1-c2))-exp(l2*(c1-c2)))/(l2-l1)
+#       return(p1 + p2)
+#     }
+#   }
+# }
+# 
+# f011 <- function(c1, c2, theta, x, h){
+#   par1 = theta$par1
+#   par2 = theta$par2
+#   gamma = theta$gamma
+#   # baseline
+#   l1_base = par1[1:npiece1]
+#   l2_base = par2[1:npiece2]
+#   # regression coefficients
+#   beta1 <- par1[-c(1:npiece1)]
+#   beta2 <- par2[-c(1:npiece2)]
+#   # baselines * x effects
+#   l1 = l1_base[h]*as.vector(exp(x%*%beta1))
+#   l2 = l2_base[h]*as.vector(exp(x%*%beta2))
+#   if(c2 == Inf){
+#     return(0)
+#   }else if(l1 ==l2){
+#     p1 = ((c1+c2)/2 - c1)*(c2 - c1)*l1*exp(l1*(c1-c2))
+#     return(p1)
+#   }else{
+#     p1 = l1/(l2-l1)*(exp(l1*(c1-c2))-exp(l2*(c1-c2)))/(l2-l1)
+#     p2 = -l1/(l2-l1)*exp(l2*(c1-c2))*(c2-c1)
+#     return(p1 + p2)
+#   }
+# }
+f001 = function(u, L, R, theta, x){p_fn(L, u, theta, x)[1, 1]*p_fn(u, R, theta, x)[1, 2]}
+f001.s <- Vectorize(f001, vectorize.args = "u") 
+# this is given 1 so calculated given path being 0-1-2
+mu_0t_given1_integrate <- function(theta, ar, zar, L, R, V, x, h, cutpoints){
+  if (zar == 0){
+    L <- ar; R <- V
+  }
+  p1 <- max(min(cutpoints[h+1], L) - max(cutpoints[h], 0), 0) # piece 1
+  c1 <- max(cutpoints[h], L)
+  c2 <- min(cutpoints[h+1], R)
+  if(c1 >= c2){
+    p2 <- 0
+  }else{
+    p2 <- integrate(f = f001.s, lower = c1, upper = c2, L = L, R = R, theta = theta, x = x)$value
+    p2 <- p2/p_fn(L, R, theta, x)[1, 2]
+  }
+  p1 + p2
+}
+
+mu_0t_given1_integrate_fast <- function(theta, ar, zar, L, R, V, x, h, cutpoints){
+  if (zar == 0){
+    L <- ar; R <- V
+  }
+  p1 <- max(min(cutpoints[h+1], L) - max(cutpoints[h], 0), 0) # piece 1
+  c1 <- max(cutpoints[h], L)
+  c2 <- min(cutpoints[h+1], R)
+  if(c1 >= c2){
+    p2 <- 0
+  }else{
+    # c1 and c2 might contain other sections (not homogenous)
+    h.lower = min(which(all_cut_points > c1)) - 1
+    h.upper = ifelse(c2 == Inf, max(which(all_cut_points < c2)) - 1, max(which(all_cut_points <= c2)) - 1)
+    if(h.lower > h.upper){ # if h.lower > h.upper -> same interval h.lower
+      p2 = f001.int(L, R, c1, c2, theta, x, h = h.lower)
+    }else if (h.lower == h.upper){# spans 2 intervals
+      p2 = f001.int(L, R, c1, all_cut_points[h.lower + 1], theta, x, h = h.lower) + 
+        f001.int(L, R, all_cut_points[h.upper + 1], c2, theta, x, h = h.upper + 1) 
+    }else{ # spans more intervals
+      p2 <- f001.int(L, R, c1, all_cut_points[h.lower + 1], theta, x, h = h.lower) +
+        f001.int(L, R, all_cut_points[h.upper + 1], c2, theta, x, h = h.upper + 1)
+      for(i in 1:(h.upper - h.lower)){
+        p2 = p2 + f001.int(L, R, all_cut_points[h.lower + i], all_cut_points[h.lower + i + 1], theta, x, h = h.lower + i)
+      }
+    }
+  }
+  p2 <- p2/p_fn(L, R, theta, x)[1, 2]
+  p1 + p2
+}
+
+f001.int <- function(L, R, c1, c2, theta, x, h){
+  # which set of par
+  par01 = theta$par01
+  par02 = theta$par02
+  par12 = theta$par12
+  # baseline
+  l01_base = par01[1:npiece1]
+  l02_base = par02[1:npiece2]
+  l12_base = par12[1:npiece2]
+  # regression coefficients
+  beta01 <- par01[-c(1:npiece1)]
+  beta02 <- par02[-c(1:npiece2)]
+  beta12 <- par12[-c(1:npiece2)]
+  # baselines * x effects
+  l01 = l01_base[a[h]]*as.vector(exp(x%*%beta01))
+  l02 = l02_base[b[h]]*as.vector(exp(x%*%beta02))
+  l12 = l12_base[b[h]]*as.vector(exp(x%*%beta12))
+  if(l12 == l01 + l02){
+    l01*exp((l01 + l02)*L - l12*R)*(R*(c2 - c1) - (c2^2 - c1^2)/2)
+  }else{
+    s1 <- exp(-(l01 + l02)*R)*(c2 - c1)
+    s2 <- exp(-l12*R)/(l12 - l01 - l02)*(exp((l12 - l01 - l02)*c2) - exp((l12 - l01 - l02)*c1))
+    l01/(l12 - l01 - l02)*exp((l01 + l02)*L)*(s1 - s2)
+  }
+}
+
+
+# mu_0t_given1_integrate(theta, ar, zar, L, R, V, x, h, cutpoints)
+
+mu_0t_given1_fn_s <- function(i, h, theta, datac, cutpoints){
+  temp <- datac[i, ]
+  val = with(temp, mu_0t_given1_integrate(theta, ar, zar, L, R, V, x = as.numeric(temp[c(paste0("x", 1:p))]), h = h, cutpoints = cutpoints))
+  return(val)
+}
+
+# mu_0t_given1_fn_s(i = 1, h = 1, theta, datac, cutpoints = cut_points_01)
+# mu_0t_given1_fn_fast_s(i = 1, h = 1, theta, datac, cutpoints = cut_points_01)
+# mu_0t_given1_integrate_fast(theta, ar, zar, L, R, V, x, h = 1, cut_points_01)
+
+mu_0t_given1_fn_fast_s <- function(i, h, theta, datac, cutpoints){
+  temp <- datac[i, ]
+  val = with(temp, mu_0t_given1_integrate_fast(theta, ar, zar, L, R, V, x = as.numeric(temp[c(paste0("x", 1:p))]), h, cutpoints))
+  return(val)
+}
+# mu_0t_given1_fn_s(i = 2, 3, theta, datac,cutpoints = cutpoints_D)
+
+
+# mu_0t_given1_fn <- function(theta, L, R, x, h){
+#     p1 <- max(min(cut_points_D[h+1], L) - max(cut_points_D[h], 0), 0)
+#     c1 <- max(cut_points_D[h], L)
+#     c2 <- min(cut_points_D[h+1], R)
+#     # f = function(u){p_fn(c1, u, theta, x)[1, 1]*p_fn(u, c2, theta, x)[1, 2]/p_fn(L, R, theta, x)[1, 2]}
+#     # f.s <- Vectorize(f)
+#     # p2 <- integrate(f = f.s, lower = L, upper = R)$value
+#     span.index <- which(cut_points > c1 & cut_points < c2)
+#     if(length(span.index) == 0){
+#       p2 <- p_fn(L, c1, theta, x)[1, 1]*f001(c1, c2, theta, x, h)*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2]
+#     }else if (length(span.index) > 0){
+#       last_index = length(span.index) 
+#       p2.mid <- f001(c1, cut_points[span.index[1]], theta, x, h) + f001(cut_points[span.index[last_index]], c2, theta, x, h)
+#       if(length(span.index) > 1){
+#         # split into length (span.index) + 1 parts
+#         for(i in 1:(last_index - 1)){
+#           p2.mid <- p2.mid + f001(span.index[i], span.index[i + 1], theta, x, h)
+#         }
+#       }
+#       p2 <- p_fn(L, c1, theta, x)[1, 1]*p2.mid*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2]
+#     }
+#     return(p1 + p2)
+# }
+
+# mu_0t_given1_fn(theta, L, R, x, h)
+
+
+# vapply(1:10, mu_0t_given1_fn_s, h = 2, theta = theta, FUN.VALUE = numeric(1), datac = datac, cutpoints = cutpoints_D)
+############################5
+
+f011 = function(u, L, R, theta, x){p_fn(L, u, theta, x)[1, 2]*p_fn(u, R, theta, x)[2, 2]}
+f011.s <- Vectorize(f011, vectorize.args = "u") 
+
+mu_tv_given1_integrate <- function(theta, ar, zar, L, R, V, x, h, cutpoints){ # given path being 0-1-2, sojourn time in state 1
+  p1 <- max(min(cutpoints[h+1], V) - max(cutpoints[h], R), 0)
+  if (zar == 0){
+    L <- ar; R <- V; p1 <- 0
+  }
+  c1 <- max(cutpoints[h], L)
+  c2 <- min(cutpoints[h+1], R) 
+  if(c1 >= c2){
+    p2 <- 0
+  }else{
+    p2 <- integrate(f011.s, lower = c1, upper = c2, L, R, theta, x)$value
+    p2 <- p2/p_fn(L, R, theta, x)[1, 2]
+  }
+  return(p1 + p2)
+}
+
+mu_tv_given1_fn_s <- function(i, h, theta, datac, cutpoints){
+  temp <- datac[i, ]
+  val = with(temp, mu_tv_given1_integrate(theta, ar, zar, L, R, V, x = as.numeric(temp[c(paste0("x", 1:p))]), h, cutpoints))
+  return(val)
+}
+
+mu_tv_given1_integrate_fast <- function(theta, ar, zar, L, R, V, x, h, cutpoints){ # given path being 0-1-2, sojourn time in state 1
+  p1 <- max(min(cutpoints[h+1], V) - max(cutpoints[h], R), 0)
+  if (zar == 0){
+    L <- ar; R <- V; p1 <- 0
+  }
+  c1 <- max(cutpoints[h], L)
+  c2 <- min(cutpoints[h+1], R) 
+  if(c1 >= c2){
+    p2 <- 0
+  }else{
+    # c1 and c2 might contain other sections (not homogenous)
+    h.lower = min(which(all_cut_points > c1)) - 1
+    h.upper = ifelse(c2 == Inf, max(which(all_cut_points < c2)) - 1, max(which(all_cut_points <= c2)) - 1)
+    if(h.lower > h.upper){ # if h.lower > h.upper -> same interval h.lower
+      p2 = f011.int(L, R, c1, c2, theta, x, h = h.lower)
+    }else if (h.lower == h.upper){# spans 2 intervals
+      p2 = f011.int(L, R, c1, all_cut_points[h.lower + 1], theta, x, h = h.lower) + 
+        f011.int(L, R, all_cut_points[h.upper + 1], c2, theta, x, h = h.upper + 1) 
+    }else{ # spans more intervals
+      p2 <- f011.int(L, R, c1, all_cut_points[h.lower + 1], theta, x, h = h.lower) +
+        f011.int(L, R, all_cut_points[h.upper + 1], c2, theta, x, h = h.upper + 1)
+      for(i in 1:(h.upper - h.lower)){
+        p2 = p2 + f011.int(L, R, all_cut_points[h.lower + i], all_cut_points[h.lower + i + 1], theta, x, h = h.lower + i)
+      }
+    }
+  }
+  return(p1 + p2/p_fn(L, R, theta, x)[1, 2])
+}
+
+mu_tv_given1_fn_fast_s <- function(i, h, theta, datac, cutpoints){
+  temp <- datac[i, ]
+  val = with(temp, mu_tv_given1_integrate_fast(theta, ar, zar, L, R, V, x = as.numeric(temp[c(paste0("x", 1:p))]), h, cutpoints))
+  return(val)
+}
+# mu_tv_given1_integrate(theta.t, ar, zar, L, R, V, x, h = 1, cutpoints = cut_points_01)
+# mu_tv_given1_integrate_fast(theta.t, ar, zar, L, R, V, x, h = 1, cutpoints = cut_points_01)
+
+
+f011.int <- function(L, R, c1, c2, theta, x, h){
+  # which set of par
+  par01 = theta$par01
+  par02 = theta$par02
+  par12 = theta$par12
+  # baseline
+  l01_base = par01[1:npiece1]
+  l02_base = par02[1:npiece2]
+  l12_base = par12[1:npiece2]
+  # regression coefficients
+  beta01 <- par01[-c(1:npiece1)]
+  beta02 <- par02[-c(1:npiece2)]
+  beta12 <- par12[-c(1:npiece2)]
+  # baselines * x effects
+  l01 = l01_base[a[h]]*as.vector(exp(x%*%beta01))
+  l02 = l02_base[b[h]]*as.vector(exp(x%*%beta02))
+  l12 = l12_base[b[h]]*as.vector(exp(x%*%beta12))
+  if(l12 == l01 + l02){
+    l01*exp((l01 + l02)*L - l12*R)*((c2^2 - c1^2)/2 -  L*(c2 - c1))
+  }else{
+    s1 <- exp((l01 + l02)*L - l12*R)/(l12 - l01 - l02)*(exp((l12 - l01 - l02)*c2) - exp((l12 - l01 - l02)*c1))
+    s2 <- exp(l12*(L - R))*(c2 - c1)
+    l01/(l12 - l01 - l02)*(s1 - s2)
+  }
+}
+
+
+# mu_tv_given1_fn_s(i = 1, 3, theta, datac, cutpoints = cut_points_D)
+# vapply(1:22, mu_tv_given1_fn_s, h = 3, theta = theta, FUN.VALUE = numeric(1), datac = datac, cutpoints = cut_points_D)
+
+
+# mu_tv_given1_fn <- function(theta, path, L, R, V, x, h){
+#   if(path == 2){
+#     return(0)
+#   }else if(path == 1){
+#     p1 <- max(min(cut_points_D[h+1], V) - max(cut_points_D[h], R1), 0)
+#     c1 <- max(cut_points_D[h], L)
+#     c2 <- min(cut_points_D[h+1], R) 
+#     # p2 <- integrate(function(u){p_fn(L1, u, theta, x)[2, 1]*p_fn(u, R1, theta, x)[2, 2]/p_fn(L1, R1, theta, x)[1, 2]}, lower = c1, uppper = c2)
+#     # compare with cut_points 
+#     span.index <- which(cut_points > c1 & cut_points < c2)
+#     if(length(span.index) == 0){
+#       p2 <- p_fn(L, c1, theta, x)[1, 1]*f011(c1, c2, theta, x, h)*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2]
+#     }else if (length(span.index) > 0){
+#       last_index = length(span.index) 
+#       p2.mid <- f011(c1, cut_points[span.index[1]], theta, x, h) + f011(cut_points[span.index[last_index]], c2, theta, x, h)
+#       if(length(span.index) > 1){
+#         # split into length (span.index) + 1 parts
+#         for(i in 1:(last_index - 1)){
+#           p2.mid <- p2.mid + f011(span.index[i], span.index[i + 1], theta, x, h)
+#         }
+#       }
+#       p2 <- p_fn(L, c1, theta, x)[1, 1]*p2.mid*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2]
+#     }
+#   }
+#   return(p1 + p2)
+# }
+# 
+##################6
+# mu_0v_given0_marker_fn <- function(zar, h, V){ # path must be 1 (if zar = 1 then 0)
+#   if(zar == 0){
+#   max(min(cut_points_01[h+1], V) - max(cut_points_01[h], 0), 0)
+#   }else if(zar == 1){
+#     0
+#   }
+# }
+# 
+# mu_0v_given0_marker_fn_s <- function(i, h, theta, datac){
+#   temp <- datac[i, ]
+#   val = with(temp, mu_0v_given0_marker_fn(zar, h, V))
+#   return(val)
+# }
+# 
+# mu_0v_given0_marker_fn_s(i = 3, 3, theta, datac)
+# 
+# vapply(1:10, mu_0v_given0_marker_fn_s, h = 3, theta = theta, FUN.VALUE = numeric(1), datac = datac)
+
+##################7
+# mu_0t_given1_marker_fn <- function(theta, ar, zar, L, R, x, h){ 
+#   if (zar == 0){
+#     L <- ar; R <- V
+#   }
+#   p1 <- max(min(cut_points_01[h+1], L) - max(cut_points_01[h], 0), 0) # the h is for the 01 process
+#   c1 <- max(cut_points_01[h], L)
+#   c2 <- min(cut_points_01[h+1], R)
+#   if(c1 > c2){
+#     p2 <- 0
+#   }else{
+#     p2 <- integrate(f001.s, lower = c1, upper = c2, L, R, theta, x)$value
+#   }
+#   p1 + p2
+# }
+
+
+# mu_0t_given1_marker_fn <- function(theta, zar, L, R, x, h){ # the h is for the 01 process
+#   if (zar == 0){
+#     L <- ar; R <- V
+#   }
+#   p1 <- max(min(cut_points_01[h+1], L) - max(cut_points_01[h], 0), 0)
+#   c1 <- max(cut_points_01[h], L)
+#   c2 <- min(cut_points_01[h+1], R)
+#   # given c1 and c2, what cut-points does the interval spans
+#   span.index <- which(cut_points > c1 & cut_points < c2)
+#   if(length(span.index) == 0){
+#     p2 <- p_fn(L, c1, theta, x)[1, 1]*f001(c1, c2, theta, x, h)*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2]
+#   }else if (length(span.index) > 0){
+#     last_index = length(span.index) 
+#     p2.mid <- f001(c1, cut_points[span.index[1]], theta, x, h) + f001(cut_points[span.index[last_index]], c2, theta, x, h)
+#     if(length(span.index) > 1){
+#       # split into length (span.index) + 1 parts
+#       for(i in 1:(last_index - 1)){
+#         p2.mid <- p2.mid + f001(span.index[i], span.index[i + 1], theta, x, h)
+#       }
+#     }
+#     p2 <- p_fn(L, c1, theta, x)[1, 1]*p2.mid*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2]
+#   }
+#   p1 + p2
+# }
+
+# mu_0t_given1_marker_fn_s <- function(i, h, theta, datac){
+#   temp <- datac[i, ]
+#   val = with(temp, mu_0t_given1_marker_fn(theta, ar, zar, L, R, x = as.numeric(temp[c(paste0("x", 1:p))]), h))
+#   return(val)
+# }
+# 
+# mu_0t_given1_marker_fn_s(i = 1, 3, theta, datac)
+# 
+# vapply(1:10, mu_0t_given1_marker_fn_s, h = 3, theta = theta, FUN.VALUE = numeric(1), datac = datac)
+
+########################8
+Et01inB_given1_fn <- function(theta, ar, zar, L, R, V, x, h){
+  if(zar == 0){
+    L <- ar; R <- V
+  }
+  c1 <- max(cut_points_01[h], L)
+  c2 <- min(cut_points_01[h+1], R)
+  val = ifelse(c1 > c2, 0, p_fn(L, c1, theta, x)[1, 1]*p_fn(c1, c2, theta, x)[1, 2]*p_fn(c2, R, theta, x)[2, 2]/p_fn(L, R, theta, x)[1, 2])
+}
+
+Et01inB_given1_fn_s <- function(i, h, theta, datac){
+  temp <- datac[i, ]
+  val = with(temp, Et01inB_given1_fn(theta, ar, zar, L, R, V, x = as.numeric(temp[c(paste0("x", 1:p))]), h))
+  return(val)
+}
