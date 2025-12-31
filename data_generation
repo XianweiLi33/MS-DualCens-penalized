@@ -1,0 +1,76 @@
+# generate complete paths from  an illness-death model under continuous observation
+data_comp_gen <- function(seed, theta, n) {
+  set.seed(seed)
+  # which set of par
+  par01 = theta$par01
+  par02 = theta$par02
+  par12 = theta$par12
+  # baseline
+  l01_base = par01[1]
+  l02_base = par02[1]
+  l12_base = par12[1]
+  # regression coefficients
+  beta01 <- par01[-c(1:npiece1)]
+  beta02 <- par02[-c(1:npiece2)]
+  beta12 <- par12[-c(1:npiece2)]
+  # generate x
+  x <- rmvnorm(n, mean = mean.x, sigma = sigma.x)
+  t01 <- rexp(n = n, rate = l01_base * exp(x%*% beta01))
+  t12 <- t01 + rexp(n = n, rate = l12_base * exp(x%*% beta12))
+  t02 <- rexp(n = n, rate = l02_base * exp(x %*% beta02))
+  # generate t12
+  # generate t02
+  temp = data.frame(id = 1:n,
+                    t01 = t01,
+                    t12 = t12,
+                    t02 = t02)
+  # change names
+  colnames(x) <- paste0("x", 1:p)
+  data.comp <- cbind(temp, x)
+  return(data.comp)
+}
+
+# generate interval-censored illness-death data under dual censoring scheme
+data_ic_gen <- function(seed, datat, rho.visit){
+  set.seed(seed)
+  datac.list <- NULL
+  for (i in 1:nrow(datat)){
+    temp = datat[i,]
+    path = ifelse(temp$t01 > temp$t02, 2, 1) # smaller time defines the path, 0-2 is path 2
+    fun <- stepfun(x = temp$t01, y = 0:1)
+    # generate A (actual # of visits)
+    A <- rpois(1, rho.visit*C)
+    if(A == 0) next
+    Ai <- runif(A) * C
+    Ai <- c(0,Ai[order(Ai)])
+    # record observed state
+    if(path == 2){
+      L <- R <- NA
+      V = ifelse(C < temp$t02, C, temp$t02)
+      delta = ifelse(C < temp$t02, 0, 1)
+      ar = max(Ai[which(Ai < V)])
+      zar <- fun(ar)
+    }else if(path == 1){
+      V = ifelse(C < temp$t12, C, temp$t12)
+      delta = ifelse(C < temp$t12, 0, 1)
+      ar = max(Ai[which(Ai < V)])
+      zar <- fun(ar)
+      if(zar == 1){
+        z <- fun(Ai)
+        L <- Ai[max(which(z == 0))]
+        R <- Ai[min(which(z == 1))]
+      }else{
+        L <- R <- NA
+      }
+    }
+    datac.list[[i]] <- data.frame(id = i, ar, zar, L, R, V, delta)
+  }
+  datac <- do.call(rbind, datac.list)
+  # id with x
+  x.df <- datat[, c("id", paste0("x", 1:p))]
+  # merge -> id + censored interval + x
+  datac <- merge(datac, x.df, by = "id")
+  return(datac)
+}
+
+
